@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>3D model of a building</title>
+	<meta charset="utf-8">
+	<link type="text/css" rel="stylesheet" href="main.css">
+</head>
+
+<body>
+	<script type="module">
+		import * as THREE from './build/three.module.js';
+		import Stats from './jsm/libs/stats.module.js';
+
+		import { OrbitControls } from './jsm/controls/OrbitControls.js';
+		import { GLTFLoader } from './jsm/loaders/GLTFLoader.js';
+		import { ShadowMapViewer } from './jsm/utils/ShadowMapViewer.js';
+		import { RoughnessMipmapper } from './jsm/utils/RoughnessMipmapper.js';
+		import { RGBELoader } from './jsm/loaders/RGBELoader.js';
+
+		let SCREEN_WIDTH = window.innerWidth;
+		let SCREEN_HEIGHT = window.innerHeight;
+
+		let camera, controls, scene, renderer;
+		let container, stats;
+
+		const NEAR = 0.1, FAR = 1000;
+
+		let mixer;
+		const morphs = [];
+
+		let light;
+
+		const G_opacity = 1;
+		const G_gap = 1;
+		const G_lvHeight = 3;
+
+		const clock = new THREE.Clock();
+
+		let AniTime = 0;
+		let AniDir = true;
+		let AniPhase = 0;
+		let g_font;
+
+		let meshLevel = [];
+		let animals = [];
+		let L1Name;
+
+		for (let i = 0; i < 4; ++i) {
+			meshLevel[i] = [];
+		}
+
+		init();
+		animate();
+
+		function initCoordinator() {
+			const xAxis = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), 1, 0xff0000, 0.1, 0.1);
+			const yAxis = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), 1, 0x00ff00, 0.1, 0.1);
+			const zAxis = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1, 0x0000ff, 0.1, 0.1);
+			xAxis.position.set(0, 0, -4);
+			yAxis.position.set(0, 0, -4);
+			zAxis.position.set(0, 0, -4);
+			scene.add(xAxis);
+			scene.add(yAxis);
+			scene.add(zAxis);
+		}
+
+		function init() {
+			container = document.createElement('div');
+			document.body.appendChild(container);
+			// CAMERA
+			camera = new THREE.PerspectiveCamera(45, SCREEN_WIDTH / SCREEN_HEIGHT, NEAR, FAR);
+			camera.up = new THREE.Vector3(0, 0, 1);
+			camera.position.set(30, -10, 50);
+
+			// SCENE
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x59472b);
+			initCoordinator()
+
+			// LIGHTS
+			const ambient = new THREE.AmbientLight(0x444444);
+			scene.add(ambient);
+
+			light = new THREE.DirectionalLight(0xffffff, 0.9);
+			light.position.set(25, 0, 25);
+			light.target.position.set(0, 0, 0);
+
+			light.castShadow = true;
+			light.shadow.camera.near = 1;
+			light.shadow.camera.far = 50;
+
+			light.shadow.mapSize.width = 1000;
+			light.shadow.mapSize.height = 1000;
+
+			light.shadow.camera.left = -30;
+			light.shadow.camera.right = 30;
+			light.shadow.camera.bottom = -30;
+			light.shadow.camera.top = 30;
+
+
+			// const helper = new THREE.CameraHelper( light.shadow.camera );
+			// scene.add( helper );
+
+			scene.add(light);
+			scene.add(light.target);
+
+			// light = new THREE.SpotLight(0xffffff, 1, 0, Math.PI / 10, 0.3, 1);
+			// light.position.set(0, 0, 1000);
+			// light.target.position.set(0, 0, 0);
+
+			// light.castShadow = true;
+			// light.shadow.camera.near = 1;
+			// light.shadow.camera.far = 1000;
+
+			// light.shadow.mapSize.width = 1000;
+			// light.shadow.mapSize.height = 1000;
+
+			// light.shadow.camera.left = -1000;
+			// light.shadow.camera.right = 1000;
+			// light.shadow.camera.bottom = -1000;
+			// light.shadow.camera.top = 1000;
+
+
+			// const helper = new THREE.CameraHelper( light.shadow.camera );
+			// scene.add( helper );
+
+			// scene.add(light);
+			// scene.add(light.target);
+			createScene();
+
+			// RENDERER
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+			container.appendChild(renderer.domElement);
+
+			renderer.outputEncoding = THREE.sRGBEncoding;
+			renderer.autoClear = false;
+
+			//
+			renderer.shadowMap.enabled = true;
+			renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+			// CONTROLS
+			const controls = new OrbitControls(camera, renderer.domElement);
+			controls.addEventListener('change', render); // use if there is no animation loop
+			controls.minDistance = 1;
+			controls.maxDistance = 1000;
+			controls.target.set(0, 10, 0);
+			controls.update();
+
+			// STATS
+			stats = new Stats();
+			container.appendChild(stats.dom);
+
+			//
+			window.addEventListener('resize', onWindowResize);
+		}
+
+		function onWindowResize() {
+			SCREEN_WIDTH = window.innerWidth;
+			SCREEN_HEIGHT = window.innerHeight;
+
+			camera.aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+			camera.updateProjectionMatrix();
+			renderer.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+		}
+
+		function loadFont() {
+			const loader = new THREE.FontLoader();
+			loader.load('fonts/gentilis_bold.typeface.json', function (font) {
+				g_font = font;
+			});
+		}
+
+		function CreateText(_text, x, y, z) {
+			const textGeo = new THREE.TextGeometry(_text, {
+				font: g_font,
+				size: 100,
+				height: 50,
+				curveSegments: 1,
+				bevelThickness: 1,
+				bevelSize: 1,
+				bevelEnabled: true
+			});
+
+			const textMaterial = new THREE.MeshPhongMaterial({ color: 0x000000 });
+			const text = new THREE.Mesh(textGeo, textMaterial);
+			text.scale.set(0.005, 0.005, 0.005);
+			text.castShadow = true;
+			text.receiveShadow = true;
+			text.position.set(x, y, z);
+			text.rotation.set(0, Math.PI / 2, Math.PI / 2);
+
+			scene.add(text);
+			return text;
+		}
+
+		loadFont();
+		TryCreateTexts();
+
+		function CreateTexts() {
+			meshLevel[0].push(CreateText("bathroom", -1.5, -3, G_lvHeight * (-1)));
+			meshLevel[0].push(CreateText("Storage Room", -1.5, 1.2, G_lvHeight * (-1)));
+
+			meshLevel[1].push(CreateText("living room", 5, 0, G_lvHeight * (0)));
+			meshLevel[1].push(CreateText("bathroom", -1.5, -3, G_lvHeight * (0)));
+			meshLevel[1].push(CreateText("kitchen", -6, 2, G_lvHeight * (0)));
+			meshLevel[1].push(CreateText("dining room", -6, -3, G_lvHeight * (0)));
+
+			meshLevel[2].push(CreateText("bathroom", -1.5, -3, G_lvHeight * (1)));
+			meshLevel[2].push(CreateText("bedroom", -1.5, 1.5, G_lvHeight * (1)));
+			meshLevel[2].push(CreateText("bedroom", -6, 1.5, G_lvHeight * (1)));
+			meshLevel[2].push(CreateText("bedroom", -6, -3, G_lvHeight * (1)));
+
+			meshLevel[3].push(CreateText("bathroom", -1.5, -3, G_lvHeight * (2)));
+			meshLevel[3].push(CreateText("bedroom", -1.5, 1.5, G_lvHeight * (2)));
+			meshLevel[3].push(CreateText("balcony", -6, -1, G_lvHeight * (2)));
+		}
+
+		function TryCreateTexts() {
+			if (g_font) {
+				CreateTexts();
+			} else {
+				setTimeout(() => {
+					TryCreateTexts();
+				}, 200);
+			}
+		}
+
+		function createScene() {
+			// GROUND
+			const geometry = new THREE.PlaneGeometry(50, 50);
+			const planeMaterial = new THREE.MeshPhongMaterial({ color: 0xffb851 });
+
+			const ground = new THREE.Mesh(geometry, planeMaterial);
+
+			ground.position.set(0, 0, 0);
+
+			ground.castShadow = false;
+			ground.receiveShadow = true;
+			scene.add(ground);
+
+			mixer = new THREE.AnimationMixer(scene);
+
+			function addMorph(mesh, clip, speed, duration, x, y, z) {
+				mesh = mesh.clone();
+				mesh.scale.set(0.01, 0.01, 0.01);
+				mesh.material = mesh.material.clone();
+				mesh.speed = speed;
+
+				mixer.clipAction(clip, mesh).
+					setDuration(duration).
+					play();
+
+				mesh.position.set(x, y, z);
+
+				mesh.castShadow = true;
+				mesh.receiveShadow = true;
+
+				scene.add(mesh);
+				morphs.push(mesh);
+				return mesh;
+			}
+
+			const gltfloader = new GLTFLoader();
+
+			gltfloader.load("models/U1.glb", function (gltf) {
+				const U1 = gltf.scene.children[0];
+				U1.material = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: G_opacity });
+
+				U1.position.set(-2.25, 0, -G_lvHeight);
+				U1.rotation.set(Math.PI / 2, Math.PI, 0);
+				U1.castShadow = true;
+				U1.receiveShadow = true;
+				scene.add(U1);
+				meshLevel[0].push(U1);
+				render();
+			});
+
+			gltfloader.load("models/L1.glb", function (gltf) {
+				const L1 = gltf.scene.children[0];
+				L1.material = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: G_opacity });
+
+				L1.position.set(1.47, 3.7, 0);
+				L1.rotation.set(Math.PI / 2, Math.PI, 0);
+				L1.castShadow = true;
+				L1.receiveShadow = true;
+				scene.add(L1);
+				meshLevel[1].push(L1);
+				L1Name = L1.name;
+				render();
+			});
+
+			gltfloader.load("models/L2.glb", function (gltf) {
+				const L2 = gltf.scene.children[0];
+				L2.material = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: G_opacity });
+
+				L2.position.set(0, 0, 3);
+				L2.rotation.set(Math.PI / 2, Math.PI, 0);
+				L2.castShadow = true;
+				L2.receiveShadow = true;
+				scene.add(L2);
+				meshLevel[2].push(L2);
+				render();
+			});
+
+			gltfloader.load("models/L3.glb", function (gltf) {
+				const L3 = gltf.scene.children[0];
+				L3.material = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: G_opacity });
+
+				L3.position.set(0, 0, 6);
+				L3.rotation.set(Math.PI / 2, Math.PI, 0);
+				L3.castShadow = true;
+				L3.receiveShadow = true;
+				scene.add(L3);
+				meshLevel[3].push(L3);
+				render();
+			});
+
+			gltfloader.load("models/Horse.glb", function (gltf) {
+				const mesh = gltf.scene.children[0];
+				mesh.rotation.set(Math.PI / 2, Math.PI, 0);
+				const clip = gltf.animations[0];
+				const horse = addMorph(mesh, clip, 5, 0.5, 10, 0, 0);
+				meshLevel[1].push(horse);
+				animals.push(horse);
+			});
+
+			gltfloader.load("models/Parrot.glb", function (gltf) {
+				const mesh = gltf.scene.children[0];
+				mesh.rotation.set(Math.PI / 2, Math.PI, 0);
+				const clip = gltf.animations[0];
+				const parrot = addMorph(mesh, clip, 6, 0.5, 10, 0, 3);
+				meshLevel[2].push(parrot);
+				animals.push(parrot);
+			});
+
+			gltfloader.load("models/Stork.glb", function (gltf) {
+				const mesh = gltf.scene.children[0];
+				mesh.rotation.set(Math.PI / 2, Math.PI, 0);
+				const clip = gltf.animations[0];
+				const stork = addMorph(mesh, clip, 3, 0.5, 10, 0, 6);
+				meshLevel[3].push(stork);
+				animals.push(stork);
+			});
+
+		}
+
+		function animate() {
+			requestAnimationFrame(animate);
+			render();
+			stats.update();
+		}
+
+		function LevelsAnimate(delta) {
+			AniTime += delta;
+
+			switch (AniPhase) {
+				case 0://wait
+					if (AniTime > 3) {
+						AniTime = 0;
+						AniPhase += 1;
+						AniPhase = AniPhase % 6;
+					}
+					break;
+				case 1://up
+					for (let i = 0; i < meshLevel.length; ++i) {
+						for (let j = 0; j < meshLevel[i].length; ++j) {
+							let mesh = meshLevel[i][j];
+							let x = mesh.position.x;
+							let y = mesh.position.y;
+
+							let startZ = G_lvHeight * (i - 1);
+							let endZ = G_lvHeight * (i) + G_gap * (i + 1);
+
+							mesh.position.set(x, y, startZ + (endZ - startZ) * AniTime);
+						}
+					}
+					if (AniTime > 1) {
+						AniTime = 0;
+						AniPhase += 1;
+						AniPhase = AniPhase % 6;
+					}
+					break;
+				case 2://right
+					for (let i = 0; i < meshLevel.length; ++i) {
+						for (let j = 0; j < meshLevel[i].length; ++j) {
+							let mesh = meshLevel[i][j];
+							let x = mesh.position.x;
+							let z = mesh.position.z;
+
+							if (!mesh.startY) {
+								mesh.startY = mesh.position.y;
+							}
+							let endY = mesh.startY + 8.0 * (i - 1);
+
+							mesh.position.set(x, mesh.startY + (endY - mesh.startY) * AniTime, z);
+						}
+					}
+					if (AniTime > 1) {
+						for (let i = 0; i < meshLevel.length; ++i) {
+							for (let j = 0; j < meshLevel[i].length; ++j) {
+								let mesh = meshLevel[i][j];
+								let x = mesh.position.x;
+								let z = mesh.position.z;
+								let endY = mesh.startY + 8.0 * (i - 1);
+								mesh.position.set(x, mesh.startY + (endY - mesh.startY) * 1, z);
+								mesh.startY = null;
+							}
+						}
+						AniTime = 0;
+						AniPhase += 1;
+						AniPhase = AniPhase % 6;
+						break;
+					}
+					break;
+				case 3://wait
+					if (AniTime > 10) {
+						AniTime = 0;
+						AniPhase += 1;
+						AniPhase = AniPhase % 6;
+					}
+					break;
+				case 4://left
+					for (let i = 0; i < meshLevel.length; ++i) {
+						for (let j = 0; j < meshLevel[i].length; ++j) {
+							let mesh = meshLevel[i][j];
+							let x = mesh.position.x;
+							let z = mesh.position.z;
+
+							if (!mesh.startY) {
+								mesh.startY = mesh.position.y;
+							}
+							let endY = mesh.startY - 8.0 * (i - 1);
+
+							mesh.position.set(x, mesh.startY + (endY - mesh.startY) * AniTime, z);
+						}
+					}
+					if (AniTime > 1) {
+						for (let i = 0; i < meshLevel.length; ++i) {
+							for (let j = 0; j < meshLevel[i].length; ++j) {
+								let mesh = meshLevel[i][j];
+								let x = mesh.position.x;
+								let z = mesh.position.z;
+								let endY = mesh.startY - 8.0 * (i - 1);
+								if (mesh.name.indexOf("Cube") == 0) {
+									if (mesh.name == L1Name) {
+										mesh.position.set(x, 3.7, z);
+									} else {
+										mesh.position.set(x, 0, z);
+									}
+
+								} else {
+									mesh.position.set(x, mesh.startY + (endY - mesh.startY) * 1, z);
+								}
+
+								mesh.startY = null;
+							}
+						}
+						AniTime = 0;
+						AniPhase += 1;
+						AniPhase = AniPhase % 6;
+					}
+					break;
+				case 5://down
+					for (let i = 0; i < meshLevel.length; ++i) {
+						for (let j = 0; j < meshLevel[i].length; ++j) {
+							let mesh = meshLevel[i][j];
+							let x = mesh.position.x;
+							let y = mesh.position.y;
+
+							let startZ = G_lvHeight * (i - 1);
+							let endZ = G_lvHeight * (i) + G_gap * (i + 1);
+
+							mesh.position.set(x, y, endZ + (startZ - endZ) * AniTime);
+						}
+					}
+					if (AniTime > 1) {
+						for (let i = 0; i < meshLevel.length; ++i) {
+							for (let j = 0; j < meshLevel[i].length; ++j) {
+								let mesh = meshLevel[i][j];
+								let x = mesh.position.x;
+								let y = mesh.position.y;
+
+								let startZ = G_lvHeight * (i - 1);
+								let endZ = G_lvHeight * (i) + G_gap * (i + 1);
+
+								mesh.position.set(x, y, endZ + (startZ - endZ) * 1);
+							}
+						}
+						AniTime = 0;
+						AniPhase += 1;
+						AniPhase = AniPhase % 6;
+					}
+					break;
+			}
+		}
+
+		function AlignText() {
+			for (let i = 0; i < meshLevel.length; ++i) {
+				for (let j = 0; j < meshLevel[i].length; ++j) {
+					let mesh = meshLevel[i][j];
+					if (mesh.name == "") {
+						mesh.quaternion.copy(camera.quaternion);
+					}
+				}
+			}
+		}
+
+		function AnimatePath(delta) {
+			for (let i = 0; i < animals.length; ++i) {
+				const animal = animals[i];
+
+				if (!animal.phase) {
+					animal.phase = 0;
+				}
+
+				switch (parseInt(animal.phase)) {
+					case 0:
+						animal.position.y += animal.speed * delta;
+						if (animal.position.y > 8) {
+							animal.phase += 1;
+							animal.rotation.y -= Math.PI / 2;
+							animal.phase = animal.phase % 6;
+						}
+						break;
+					case 1:
+						animal.position.x -= animal.speed * delta;
+						if (animal.position.x < -8) {
+							animal.phase += 1;
+							animal.rotation.y -= Math.PI / 2;
+							animal.phase = animal.phase % 6;
+						}
+						break;
+					case 2:
+						animal.position.y -= animal.speed * delta;
+						if (animal.position.y < 6) {
+							animal.phase += 1;
+							animal.rotation.y -= Math.PI / 2;
+							animal.phase = animal.phase % 6;
+						}
+						break;
+					case 3:
+						animal.position.x += animal.speed * delta;
+						if (animal.position.x > 8) {
+							animal.phase += 1;
+							animal.rotation.y += Math.PI / 2;
+							animal.phase = animal.phase % 6;
+						}
+						break;
+					case 4:
+						animal.position.y -= animal.speed * delta;
+						if (animal.position.y < 0) {
+							animal.phase += 1;
+							animal.rotation.y -= Math.PI / 2;
+							animal.phase = animal.phase % 6;
+						}
+						break;
+					case 5:
+						animal.position.x += animal.speed * delta;
+						if (animal.position.x > 10) {
+							animal.phase += 1;
+							animal.rotation.y -= Math.PI / 2;
+							animal.phase = animal.phase % 6;
+						}
+						break;
+				}
+
+
+			}
+		}
+
+		function render() {
+			const delta = clock.getDelta();
+			mixer.update(delta);
+			LevelsAnimate(delta);
+			AnimatePath(delta);
+			AlignText();
+			// for (let i = 0; i < morphs.length; i++) {
+			// 	const morph = morphs[i];
+			// 	morph.position.y += morph.speed * delta;
+			// 	if (morph.position.y > 10) {
+			// 		morph.position.y = - 10;
+			// 	}
+			// }
+
+			// if(controls){
+			// 	controls.update( delta );
+			// }
+
+			renderer.clear();
+			renderer.render(scene, camera);
+		}
+
+	</script>
+</body>
+
+</html>
